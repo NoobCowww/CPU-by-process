@@ -1,0 +1,170 @@
+#include <WindowsConstants.au3>
+ 
+Opt('MustDeclareVars', 1)
+Opt("TrayIconHide", 1)
+HotKeySet("{ESC}", "_Exit")
+ 
+Global Const $Process_All_Access = 0x1F0FFF
+Global $CreateTime = DllStructCreate("dword;dword")
+Global $ExitTime = DllStructCreate("dword;dword")
+Global $KernelTime = DllStructCreate("dword;dword")
+Global $UserTime = DllStructCreate("dword;dword")
+Global $FileTime = DllStructCreate("dword;dword")
+Global $SystemTime = DllStructCreate("ushort;ushort;ushort;ushort;ushort;ushort;ushort;ushort")
+Global $IdleTime = DllStructCreate("dword;dword")
+Global $sUserTime, $sKernelTime, $eUserTime, $eKernelTime
+Global $ret, $hour, $minutes, $seconds, $milliseconds
+Global $ProcHandle, $Process_CPU_Usage
+Global $PID, $CPUTime, $mem, $prg
+Global $logical_cpus = CPU()
+Global $hProc
+Global $GUI, $info
+ 
+ 
+$prg = "notepad.exe"
+ 
+Run($prg)
+Sleep(500)
+ 
+$PID = ProcessExists($prg)
+If $PID = 0 Then
+    ConsoleWrite(@CRLF & "ERROR! Process " & $prg & " not found! Aborting..." & @CRLF)
+    Exit
+EndIf
+ 
+Global $iMemo, $hDebugGUI
+$GUI = GUICreate("Process Information v0.35 Beta by UEZ - Press ESC to quit! Just do some calculations...", 740, 25, -1, -1, BitOR($WS_CAPTION,$WS_POPUP,$WS_BORDER,$WS_CLIPSIBLINGS))
+$iMemo = GUICtrlCreateEdit("", -1, -1, 820)
+GUICtrlSetFont($iMemo, 9, 400, 0, "Courier New")
+GUICtrlSetBkColor($iMemo, 0xFFFFFF)
+GUISetState()
+ 
+$ProcHandle = DllCall("kernel32.dll", "hwnd", "OpenProcess", "dword", $Process_All_Access, "int", False, "dword", $PID)
+$ProcHandle = $ProcHandle[0]
+ 
+;~ ConsoleWrite(@CRLF & @CRLF & "Process Information v0.30 Beta by UEZ" & @CRLF)
+;~ ConsoleWrite("=====================================" & @CRLF & @CRLF)
+;~ ConsoleWrite("(Press ESC to exit)" & @CRLF)
+ 
+While 1
+    $CPUTime = _GetProcTime($ProcHandle)
+    $mem = _ProcessGetMem($ProcHandle) / 1024
+    $hour = Int($CPUTime / 10000000 / 3600)
+ 
+    $minutes = Int($CPUTime / 10000000 / 60)
+    If $minutes < 10 Then $minutes = "0" & $minutes
+ 
+    $seconds = Round((Int($CPUTime / 10000000) / 60 - Int($CPUTime / 10000000 / 60)) * 60, 0)
+    If $seconds < 10 Then $seconds = "0" & $seconds
+ 
+    $milliseconds = Round((Int($CPUTime / 10000) / 1000 - Int(Int($CPUTime / 10000) / 1000)) * 1000, 0)
+    If $milliseconds < 10 Then $milliseconds = "00" & $milliseconds
+    If $milliseconds > 9 And $milliseconds < 100 Then $milliseconds = "0" & $milliseconds
+ 
+    $info = @CR & $prg & " | PID: " & $PID & " | CPU time: " & $hour & ":" & $minutes & ":" & $seconds & "." & $milliseconds & " (h:m:s.ms) | Mem usage: " & $mem & " KB | CPU usage: " & $Process_CPU_Usage & " % " & @CR
+    MemoWrite($info)
+ 
+;~ ConsoleWrite($prg & " | PID: " & $PID & " | CPU time: " & $hour & ":" & $minutes & ":" & $seconds & "." & $milliseconds & " (h:m:s.ms) | Mem usage: " & $mem & " KB | CPU usage: " & $Process_CPU_Usage & " % " & @CR)
+    Sleep(1000)
+    If Not ProcessExists($PID) Then _Exit()
+WEnd
+ 
+ 
+Func MemoWrite($sMessage = "")
+    GUICtrlSetData($iMemo, $sMessage)
+EndFunc ;==>MemoWrite
+ 
+Func _GetProcTime($ProcessHandle)
+    $ret = DllCall("kernel32.dll", "int", "GetProcessTimes", "int", $ProcessHandle, "ptr", DllStructGetPtr($CreateTime), "ptr", DllStructGetPtr($ExitTime), "ptr", DllStructGetPtr($KernelTime), "ptr", DllStructGetPtr($UserTime))
+    If $ret[0] = 0 Then
+    ConsoleWrite("(" & @ScriptLineNumber & ") : = Error in GetProcessTimes call" & @CRLF)
+    SetError(1, 0, $ret[0])
+    EndIf
+    $sKernelTime = DllStructGetData($KernelTime, 1)
+    $sUserTime = DllStructGetData($UserTime, 1)
+    $Process_CPU_Usage = Floor(($sKernelTime - $eKernelTime + $sUserTime - $eUserTime) / 100000 / $logical_cpus)
+    If $Process_CPU_Usage > 100 Then $Process_CPU_Usage = "100"
+    $eKernelTime = $sKernelTime
+    $eUserTime = $sUserTime
+    Return $sUserTime + $sKernelTime
+EndFunc ;==>_GetProcTime
+ 
+Func _ProcessGetMem($ProcessHandle) ;get physical memory of the process -> http://msdn.microsoft.com/en-us/library/ms683219%28VS.85%29.aspx
+    Local $structPROCESS_MEMORY_COUNTERS, $structPROCESS_MEMORY_COUNTERS_EX, $nSize, $aRet
+    If @OSVersion <> "WIN_7" Then
+    $structPROCESS_MEMORY_COUNTERS = DllStructCreate("dword cb; dword PageFaultCount; dword_ptr PeakWorkingSetSize; dword_ptr WorkingSetSize; " & _
+    "dword_ptr QuotaPeakPagedPoolUsage; dword_ptr QuotaPagedPoolUsage; dword_ptr QuotaPeakNonPagedPoolUsage; " & _
+    "dword_ptr QuotaNonPagePoolUsage; dword_ptr PagefileUsage; dword_ptr PeakPagefileUsage") ;http://msdn.microsoft.com/en-us/library/ms684877%28VS.85%29.aspx
+    $nSize = DllStructGetSize($structPROCESS_MEMORY_COUNTERS)
+    $aRet = DllCall("psapi.dll", "int", "GetProcessMemoryInfo", "hwnd", $ProcessHandle, "ptr", DllStructGetPtr($structPROCESS_MEMORY_COUNTERS), "dword", $nSize) ;call GetProcessMemoryInfo
+    If $aRet[0] = 0 Then
+    ConsoleWrite("(" & @ScriptLineNumber & ") : = Error in GetProcessMemoryInfo call" & @LF)
+    SetError(1, 0, $aRet[0])
+    EndIf
+    Return DllStructGetData($structPROCESS_MEMORY_COUNTERS, "WorkingSetSize")
+    Else
+    $structPROCESS_MEMORY_COUNTERS_EX = DllStructCreate("dword cb; dword PageFaultCount; dword_ptr PeakWorkingSetSize; dword_ptr WorkingSetSize; " & _
+    "dword_ptr QuotaPeakPagedPoolUsage; dword_ptr QuotaPagedPoolUsage; dword_ptr QuotaPeakNonPagedPoolUsage; " & _
+    "dword_ptr QuotaNonPagePoolUsage; dword_ptr PagefileUsage; dword_ptr PeakPagefileUsage; " & _
+    "dword_ptr PrivateUsage") ;http://msdn.microsoft.com/en-us/library/ms684877%28VS.85%29.aspx
+    $nSize = DllStructGetSize($structPROCESS_MEMORY_COUNTERS_EX)
+    $aRet = DllCall("Kernel32.dll", "int", "K32GetProcessMemoryInfo", "hwnd", $ProcessHandle, "ptr", DllStructGetPtr($structPROCESS_MEMORY_COUNTERS_EX), "dword", $nSize) ;call GetProcessMemoryInfo
+    If $aRet[0] = 0 Then
+    ConsoleWrite("(" & @ScriptLineNumber & ") : = Error in GetProcessMemoryInfo call" & @LF)
+    SetError(1, 0, $aRet[0])
+    EndIf
+;~  ConsoleWrite("WorkingSetSize: " & Round(DllStructGetData($structPROCESS_MEMORY_COUNTERS_EX, "WorkingSetSize") / 1024, 0) & @CRLF & _
+;~  "PrivateUsage: " & Round(DllStructGetData($structPROCESS_MEMORY_COUNTERS_EX, "PrivateUsage") / 1024, 0) & @CRLF & @CRLF)
+    Return DllStructGetData($structPROCESS_MEMORY_COUNTERS_EX, "PrivateUsage")
+    EndIf
+EndFunc ;==>_ProcessGetMem
+ 
+Func CPU() ;get logical CPU(s)
+    Local $i, $j, $x, $os, $colItems, $HW_Processor_Description, $HW_Processor_Manufacturer, $HW_Processor_MaxClockSpeed, $HW_Processor_Name, $HW_Processor_SocketDesignation
+    Local $system = "Localhost"
+    Local $objWMIService = ObjGet("winmgmts:{impersonationLevel=impersonate}!\\" & $system & "\root\cimv2")
+ 
+    $colItems = $objWMIService.ExecQuery("SELECT Caption from Win32_OperatingSystem", "WQL", 0x30) ;get OS version
+    If IsObj($colItems) Then
+    For $objItem In $colItems
+    $os = $objItem.Caption
+    Next
+    EndIf
+    If StringInStr($os, "2003") > 0 Or StringInStr($os, "2000") > 0 Or StringInStr(StringUpper($os), "XP") > 0 Then
+    $colItems = $objWMIService.ExecQuery("Select Name, Description, Manufacturer, MaxClockSpeed, SocketDesignation from Win32_Processor", "WQL", 0x30)
+    Else
+    $colItems = $objWMIService.ExecQuery("Select Name, Description, Manufacturer, MaxClockSpeed, SocketDesignation, NumberOfCores, NumberOfLogicalProcessors from Win32_Processor", "WQL", 0x30)
+    EndIf
+    If IsObj($colItems) Then
+    $i = 0
+    $j = 0
+    $HW_Processor_SocketDesignation = ""
+    For $objItem In $colItems ;get amount of logical CPUs
+    If StringInStr(StringLower($HW_Processor_SocketDesignation), StringLower($objItem.SocketDesignation)) = 0 Then
+    $HW_Processor_SocketDesignation &= $objItem.SocketDesignation & ", "
+    EndIf
+    $i = $i + 1
+    Next
+    If StringInStr($os, "2003") > 0 Or StringInStr($os, "2000") > 0 Or StringInStr(StringUpper($os), "XP") > 0 Then
+    $x = StringSplit(Remove_Last_Comma($HW_Processor_SocketDesignation), ",")
+    $j = UBound($x) - 1
+    Else
+    $i = $objItem.NumberOfCores
+    $j = $objItem.NumberOfLogicalProcessors / $i
+    EndIf
+    If $j > $i Then $j = $i
+    EndIf
+    Return ($i)
+EndFunc ;==>CPU
+ 
+Func Remove_Last_Comma($str)
+    If StringRight($str, 2) = ", " Then $str = StringMid($str, 1, StringLen($str) - 2)
+    Return $str
+EndFunc ;==>Remove_Last_Comma
+ 
+Func _Exit()
+    DllCall("kernel32.dll", "int", "CloseHandle", "int", $ProcHandle)
+    DllCall("psapi.dll", "int", "CloseHandle", "hwnd", $ProcHandle)
+    ProcessClose($pid)
+    Exit
+EndFunc ;==>_Exit
